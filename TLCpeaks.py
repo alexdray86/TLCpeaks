@@ -22,11 +22,13 @@ parser.add_argument('-t', '--tmp_folder', type=str, default="tmp_folder",
                     help='temporary folder where intermediate results are writen. Typically, one bam file per chromosome and its respective bed file will be written there. This takes a lot of memory space and needs to be removed afterwards. Default is tmp_folder/ [OPTIONAL]')
 parser.add_argument('-n', '--n_cpu', type=int, default=4,
                     help='Number of CPU to use for multi-processing. Default is 4. [OPTIONAL]')
+parser.add_argument('-w', '--del_weight', type=float, default=0.9,
+                    help='Weight to be put on the deletion version the starting position in the combination of p-values. This weight should be in [0, 1], and the weight assigned to starting position will we (1-w). By default, w=0.9')
 parser.add_argument('--min_read_length', type=int, default=17,
         help='Min read length to consider for extracting start positions. Default is 17bp. [OPTIONAL]')
 parser.add_argument('--max_read_length', type=int, default=68,
         help='Max read length to consider for extracting start positions. Default is 68bp. [OPTIONAL]')
-parser.add_argument('-w', '--window_size', type=int, default=200,
+parser.add_argument('--window_size', type=int, default=200,
         help='Window size to compute statistics on. By default, 200bp are considered, which means +/- 100bp around position of interest. [OPTIONAL]')
 
 args = parser.parse_args()
@@ -40,6 +42,11 @@ WINDOW_SIZE = args.window_size
 TMP_FOLDER = args.tmp_folder
 TMP_CHROM_FILE = TMP_FOLDER + "/list_chromosomes.txt"
 N_CPU = args.n_cpu
+DEL_WEIGHT = args.del_weight
+if DEL_WEIGHT < 0.0 or DEL_WEIGHT > 1.0:
+    raise Exception('Weight for deletion should be included in [0, 1]. Exiting.')
+STR_WEIGHT = 1.0 - DEL_WEIGHT
+
 
 ### Class Definition ###
 
@@ -182,7 +189,7 @@ class ChromosomeParser(object):
         for i in range(len(self.res_del_pos)):
             comb_pval = combine_pvalues(np.array([self.res_del_pos[i], self.res_str_pos[i]]), 
                                              method = 'stouffer', 
-                                             weights=np.array([0.9,0.1]))[1]
+                                             weights=np.array([DEL_WEIGHT, STR_WEIGHT]))[1]
             if np.isnan(comb_pval):
                 comb_pval = min(self.res_del_pos[i], self.res_str_pos[i])
             comb_pval_pos.append(comb_pval)
@@ -191,7 +198,7 @@ class ChromosomeParser(object):
         for i in range(len(self.res_del_neg)):
             comb_pval = combine_pvalues(np.array([self.res_del_neg[i], self.res_str_neg[i]]), 
                                              method = 'stouffer', 
-                                             weights=np.array([0.9,0.1]))[1]
+                                             weights=np.array([DEL_WEIGHT, STR_WEIGHT]))[1]
             if np.isnan(comb_pval):
                 comb_pval = min(self.res_del_neg[i], self.res_str_neg[i])
             comb_pval_neg.append(comb_pval)
