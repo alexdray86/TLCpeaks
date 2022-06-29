@@ -1,13 +1,17 @@
 ### INSTALL TLCpeaks ### 
 
-# First, the python3 environment should be set up :
+# First Git Clone the repository on your computer with : 
+git clone https://github.com/alexdray86/TLCpeaks.git
+
+# Go inside the directory, and create the python3 environment :
 python3 -m venv env_TLCpeaks
 
-# The environment can be sourced to be used :
+# Now, source the environment :
 source env_TLCpeaks/bin/activate
 
-# Then, relevant libraries are install in the environment using requirement.txt :
+# Then, relevant libraries are installed in the environment using the provided file requirement.txt :
 python3 -m pip install -r requirements.txt
+
 
 ### LAUNCH AND USE TLCpeaks ### 
 
