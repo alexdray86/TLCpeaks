@@ -16,20 +16,25 @@ parser.add_argument('-i', '--input_bam', type=str,
                     help='Input BAM file to be used to call peaks. [REQUIRED]')
 parser.add_argument('-o', '--out_file', type=str,
                     help='Output file with results. [REQUIRED]')
-#parser.add_argument('-g', '--genome_file', type=str,
-#                    help='File containing chromosome sizes')
 parser.add_argument('-t', '--tmp_folder', type=str, default="tmp_folder",
                     help='temporary folder where intermediate results are writen. Typically, one bam file per chromosome and its respective bed file will be written there. This takes a lot of memory space and needs to be removed afterwards. Default is tmp_folder/ [OPTIONAL]')
 parser.add_argument('-n', '--n_cpu', type=int, default=4,
                     help='Number of CPU to use for multi-processing. Default is 4. [OPTIONAL]')
 parser.add_argument('-w', '--del_weight', type=float, default=0.9,
-                    help='Weight to be put on the deletion version the starting position in the combination of p-values. This weight should be in [0, 1], and the weight assigned to starting position will we (1-w). By default, w=0.9')
+                    help='Weight to be put on the deletion versus the starting position in the combination of p-values. This weight should be in [0, 1], and the weight assigned to starting position will we (1-w). By default, w=0.9')
 parser.add_argument('--min_read_length', type=int, default=17,
         help='Min read length to consider for extracting start positions. Default is 17bp. [OPTIONAL]')
 parser.add_argument('--max_read_length', type=int, default=68,
         help='Max read length to consider for extracting start positions. Default is 68bp. [OPTIONAL]')
 parser.add_argument('--window_size', type=int, default=200,
         help='Window size to compute statistics on. By default, 200bp are considered, which means +/- 100bp around position of interest. [OPTIONAL]')
+def boolean_string(s):
+    if s not in {'False', 'True'}:
+        raise ValueError('Not a valid boolean string')
+    return s == 'True'
+parser.add_argument('--adjust_pval', type=boolean_string, default=True, 
+        help='Whether adjusted p-value should be used to filter the results. If False, the non-adjusted p-value is used to filter significant peaks. In any cases, the asjtment is done and printed in the output. [OPTIONAL]')
+
 
 args = parser.parse_args()
 
@@ -43,10 +48,15 @@ TMP_FOLDER = args.tmp_folder
 TMP_CHROM_FILE = TMP_FOLDER + "/list_chromosomes.txt"
 N_CPU = args.n_cpu
 DEL_WEIGHT = args.del_weight
+STR_WEIGHT = 1.0 - DEL_WEIGHT
+ADJUST_PVAL = args.adjust_pval
+print(ADJUST_PVAL)
+
+# Check inputs
 if DEL_WEIGHT < 0.0 or DEL_WEIGHT > 1.0:
     raise Exception('Weight for deletion should be included in [0, 1]. Exiting.')
-STR_WEIGHT = 1.0 - DEL_WEIGHT
-
+if BAM_FILE is None or OUT_FILE is None:
+    raise Exception('Both input BAM file and output BED file need to be specified. Exiting.')
 
 ### Class Definition ###
 
@@ -65,6 +75,7 @@ class ChromosomeParser(object):
         self.bam_file_1chr = ''
         self.bed_file_1chr = ''
         self.unique_positions = np.empty(0)
+        self.unique_positions_gt1 = np.empty(0)
         self.valid_chromosome = True
         self.np_del_pos = np.empty(0) # here
         self.np_del_neg = np.empty(0)
@@ -105,7 +116,7 @@ class ChromosomeParser(object):
                 strand = fields[5]
                 cigar = fields[6]
                 read_length = int(end) - int(pos)
-                if '1D' in cigar or '1I' in cigar:
+                if '1D' in cigar : # or '1I' in cigar
                 # option 1 : there is a 1bp deletion event 
                     pos_del = self.find_1d_deletion_position(cigar)
                     if strand == '+':
@@ -128,13 +139,18 @@ class ChromosomeParser(object):
                         elif strand == '-':
                             list_start_neg.append(int(end))
         # Generate unique positions 
-        self.unique_positions = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_delet_neg),
-                                                          np.unique(list_start_pos), np.unique(list_start_neg))))
+        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_delet_neg),
+                                                          np.unique(list_start_pos), np.unique(list_start_neg))),
+                                                          return_counts=True)
+
+        self.unique_positions_gt1 = self.unique_positions[c > 1].copy()
+
         # Store numpy arrays for delete / start positions 
         # Generating numpy array from lists for better performance 
         self.np_del_pos = np.sort(np.array(list_delet_pos)) ; self.np_del_neg = np.sort(np.array(list_delet_neg))
         self.np_str_pos = np.sort(np.array(list_start_pos)) ; self.np_str_neg = np.sort(np.array(list_start_neg))
-        if len(self.unique_positions) < 10:
+
+        if len(self.unique_positions_gt1) < 1:
             self.valid_chromosome = False
             
             
@@ -147,8 +163,8 @@ class ChromosomeParser(object):
         str_pos_idx_start, str_pos_idx_end, str_neg_idx_start, str_neg_idx_end = 0, 0, 0, 0        
         del_pos_idx_start_summit, del_pos_idx_end_summit, del_neg_idx_start_summit, del_neg_idx_end_summit = 0, 0, 0, 0
         str_pos_idx_start_summit, str_pos_idx_end_summit, str_neg_idx_start_summit, str_neg_idx_end_summit = 0, 0, 0, 0
-        for position in self.unique_positions:
-            perc_adv = round(100 * count_line / len(self.unique_positions))
+        for position in self.unique_positions_gt1:
+            perc_adv = round(100 * count_line / len(self.unique_positions_gt1))
             position = int(position)
             del_pos_idx_start_summit, del_pos_idx_end_summit = self.find_position(del_pos_idx_start_summit, del_pos_idx_end_summit, position, self.np_del_pos)
             del_neg_idx_start_summit, del_neg_idx_end_summit = self.find_position(del_neg_idx_start_summit, del_neg_idx_end_summit, position, self.np_del_neg)
@@ -350,7 +366,8 @@ if __name__ == "__main__":
     print('Prepare folders and data')
     create_folder_if_not_exists(TMP_FOLDER)
     chroms = generate_chromosome_list(BAM_FILE, TMP_CHROM_FILE)
-    
+    chrome = np.flip(chroms)
+
     # Launch peak calling with multi-processing per chromosome
     print('Launch peak calling with multi-processing per chromosome')
     list_results = []
@@ -364,9 +381,14 @@ if __name__ == "__main__":
     print('Combine results and adjust p-values for multiple-testing')
     pd_general_results = pd.concat(list_results)
     pd_general_results['pval_combined_adj'] = multi.multipletests(pd_general_results['pval_combined'])[1]
-    pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < 0.05)].copy()
+    if ADJUST_PVAL:
+        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < 0.05)].copy()
+        pd_general_results_sub.sort_values('pval_combined_adj', inplace=True)
+    else:
+        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined'] < 0.05)].copy()
+        pd_general_results_sub.sort_values('pval_combined', inplace=True)
+
     pd_general_results_sub = pd_general_results_sub[['chr', 'start', 'end', 'pval_del', 'pval_start','strand', 'pval_combined', 'pval_combined_adj']]
-    pd_general_results_sub.sort_values('pval_combined_adj', inplace=True)
     pd_general_results_sub.to_csv(OUT_FILE, sep="\t", index=False, header=False)
     
     stop_all = timeit.default_timer()
