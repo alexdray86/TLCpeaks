@@ -36,6 +36,8 @@ parser.add_argument('--window_size', type=int, default=200,
         help='Window size to compute statistics on. By default, 200bp are considered, which means +/- 100bp around position of interest. [OPTIONAL]')
 parser.add_argument('--adjust_pval', type=boolean_string, default=True, 
         help='Whether adjusted p-value should be used to filter the results. If False, the non-adjusted p-value is used to filter significant peaks. In any cases, the asjtment is done and printed in the output. [OPTIONAL]')
+parser.add_argument('-p', '--pval_cutoff', type=float, default=0.05,
+                    help='Cut-off on the p-values used to call a peak significant. By default, it will be set at 0.05. If option --adjust_pval is False, then this cutoff will be used on the non-adjusted p-value.')
 
 
 args = parser.parse_args()
@@ -52,6 +54,7 @@ N_CPU = args.n_cpu
 DEL_WEIGHT = args.del_weight
 STR_WEIGHT = 1.0 - DEL_WEIGHT
 ADJUST_PVAL = args.adjust_pval
+PVAL_CUTOFF = args.pval_cutoff
 print(ADJUST_PVAL)
 
 # Check inputs
@@ -407,10 +410,10 @@ if __name__ == "__main__":
     pd_general_results = pd.concat(list_results)
     pd_general_results['pval_combined_adj'] = multi.multipletests(pd_general_results['pval_combined'])[1]
     if ADJUST_PVAL:
-        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < 0.05)].copy()
+        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < PVAL_CUTOFF)].copy()
         pd_general_results_sub.sort_values('pval_combined_adj', inplace=True)
     else:
-        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined'] < 0.05)].copy()
+        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined'] < PVAL_CUTOFF)].copy()
         pd_general_results_sub.sort_values('pval_combined', inplace=True)
 
     pd_general_results_sub = pd_general_results_sub[['chr', 'start', 'end', 'pval_del', 'pval_start','strand', 'pval_combined', 'pval_combined_adj']]
