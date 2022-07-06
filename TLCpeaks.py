@@ -9,6 +9,12 @@ from scipy.stats import binom_test, combine_pvalues
 # dev libraries : 
 import timeit
 
+# define function useful for argparse
+def boolean_string(s):
+    if s not in {'False', 'True'}:
+        raise ValueError('Not a valid boolean string')
+    return s == 'True'
+
 ### Use Argparse to get input variables ### 
 ### Parse script parameters ###
 parser = argparse.ArgumentParser(description='For detailed help consult docs at : https://alexdray86.github.io/TLCpeaks')
@@ -28,10 +34,6 @@ parser.add_argument('--max_read_length', type=int, default=68,
         help='Max read length to consider for extracting start positions. Default is 68bp. [OPTIONAL]')
 parser.add_argument('--window_size', type=int, default=200,
         help='Window size to compute statistics on. By default, 200bp are considered, which means +/- 100bp around position of interest. [OPTIONAL]')
-def boolean_string(s):
-    if s not in {'False', 'True'}:
-        raise ValueError('Not a valid boolean string')
-    return s == 'True'
 parser.add_argument('--adjust_pval', type=boolean_string, default=True, 
         help='Whether adjusted p-value should be used to filter the results. If False, the non-adjusted p-value is used to filter significant peaks. In any cases, the asjtment is done and printed in the output. [OPTIONAL]')
 
@@ -75,8 +77,10 @@ class ChromosomeParser(object):
         self.bam_file_1chr = ''
         self.bed_file_1chr = ''
         self.unique_positions = np.empty(0)
-        self.unique_positions_gt1 = np.empty(0)
-        self.valid_chromosome = True
+        self.unique_positions_pos = np.empty(0)
+        self.unique_positions_neg = np.empty(0)
+        self.valid_pos_strand = True
+        self.valid_neg_strand = True
         self.np_del_pos = np.empty(0) # here
         self.np_del_neg = np.empty(0)
         self.np_str_pos = np.empty(0)
@@ -139,20 +143,25 @@ class ChromosomeParser(object):
                         elif strand == '-':
                             list_start_neg.append(int(end))
         # Generate unique positions 
-        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_delet_neg),
-                                                          np.unique(list_start_pos), np.unique(list_start_neg))),
-                                                          return_counts=True)
+        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_start_pos))), 
+                                                             return_counts=True)
+        self.unique_positions_pos = self.unique_positions[c > 1].copy()
 
-        self.unique_positions_gt1 = self.unique_positions[c > 1].copy()
+        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_neg), np.unique(list_start_neg))),
+                                                             return_counts=True)
+        self.unique_positions_neg = self.unique_positions[c > 1].copy()
+
 
         # Store numpy arrays for delete / start positions 
         # Generating numpy array from lists for better performance 
         self.np_del_pos = np.sort(np.array(list_delet_pos)) ; self.np_del_neg = np.sort(np.array(list_delet_neg))
         self.np_str_pos = np.sort(np.array(list_start_pos)) ; self.np_str_neg = np.sort(np.array(list_start_neg))
 
-        if len(self.unique_positions_gt1) < 1:
-            self.valid_chromosome = False
-            
+        if len(self.unique_positions_pos) < 1:
+            self.valid_pos_strand = False
+        if len(self.unique_positions_neg) < 1:
+            self.valid_neg_strand = False
+
             
     def part3_analysis(self):
     ### PART 3 - Analyse all unique positions and generate p-values ###
@@ -163,41 +172,50 @@ class ChromosomeParser(object):
         str_pos_idx_start, str_pos_idx_end, str_neg_idx_start, str_neg_idx_end = 0, 0, 0, 0        
         del_pos_idx_start_summit, del_pos_idx_end_summit, del_neg_idx_start_summit, del_neg_idx_end_summit = 0, 0, 0, 0
         str_pos_idx_start_summit, str_pos_idx_end_summit, str_neg_idx_start_summit, str_neg_idx_end_summit = 0, 0, 0, 0
-        for position in self.unique_positions_gt1:
-            perc_adv = round(100 * count_line / len(self.unique_positions_gt1))
-            position = int(position)
-            del_pos_idx_start_summit, del_pos_idx_end_summit = self.find_position(del_pos_idx_start_summit, del_pos_idx_end_summit, position, self.np_del_pos)
-            del_neg_idx_start_summit, del_neg_idx_end_summit = self.find_position(del_neg_idx_start_summit, del_neg_idx_end_summit, position, self.np_del_neg)
-            str_pos_idx_start_summit, str_pos_idx_end_summit = self.find_position(str_pos_idx_start_summit, str_pos_idx_end_summit, position, self.np_str_pos)
-            str_neg_idx_start_summit, str_neg_idx_end_summit = self.find_position(str_neg_idx_start_summit, str_neg_idx_end_summit, position, self.np_str_neg)
+        
+        # Analysis of positive strand
+        if self.valid_pos_strand:
+            for position in self.unique_positions_pos:
+                position = int(position)
+                del_pos_idx_start_summit, del_pos_idx_end_summit = self.find_position(del_pos_idx_start_summit, del_pos_idx_end_summit, position, self.np_del_pos)
+                str_pos_idx_start_summit, str_pos_idx_end_summit = self.find_position(str_pos_idx_start_summit, str_pos_idx_end_summit, position, self.np_str_pos)
+                n_del_pos = len(self.np_del_pos[del_pos_idx_start_summit:del_pos_idx_end_summit])
+                n_str_pos = len(self.np_str_pos[str_pos_idx_start_summit:str_pos_idx_end_summit])
 
-            n_del_pos = len(self.np_del_pos[del_pos_idx_start_summit:del_pos_idx_end_summit])
-            n_del_neg = len(self.np_del_neg[del_neg_idx_start_summit:del_neg_idx_end_summit])
-            n_str_pos = len(self.np_str_pos[str_pos_idx_start_summit:str_pos_idx_end_summit])
-            n_str_neg = len(self.np_str_neg[str_neg_idx_start_summit:str_neg_idx_end_summit])
+                if n_del_pos > 1 or n_str_pos > 1:
+                # Here we look at the position w.r.t the positive strand and make statistics if n_event > 1
+                    # update indexes 
+                    del_pos_idx_start, del_pos_idx_end = self.update_index(del_pos_idx_start, del_pos_idx_end, position, self.np_del_pos, WINDOW_SIZE)
+                    window_del_pos = self.np_del_pos[del_pos_idx_start:del_pos_idx_end]
+                    pval_del = binom_test(n_del_pos, n=len(window_del_pos), p=proba, alternative='greater')
+                    str_pos_idx_start, str_pos_idx_end = self.update_index(str_pos_idx_start, str_pos_idx_end, position, self.np_str_pos, WINDOW_SIZE)
+                    window_str_pos = self.np_str_pos[str_pos_idx_start:str_pos_idx_end]
+                    pval_str = binom_test(n_str_pos, n=len(window_str_pos), p=proba, alternative='greater')
+                    self.res_pos_pos.append(position) ; self.res_del_pos.append(pval_del) ; self.res_str_pos.append(pval_str)
+                count_line += 1
+ 
+        # Analysis of negative strand
+        if self.valid_neg_strand:
+            prev_position = -1 ; count_line = 0
+            for position in self.unique_positions_neg:
+                position = int(position)
+                del_neg_idx_start_summit, del_neg_idx_end_summit = self.find_position(del_neg_idx_start_summit, del_neg_idx_end_summit, position, self.np_del_neg)
+                str_neg_idx_start_summit, str_neg_idx_end_summit = self.find_position(str_neg_idx_start_summit, str_neg_idx_end_summit, position, self.np_str_neg)
 
-            if n_del_pos > 1 or n_str_pos > 1:
-            # Here we look at the position w.r.t the positive strand and make statistics if n_event > 1
-                # update indexes 
-                del_pos_idx_start, del_pos_idx_end = self.update_index(del_pos_idx_start, del_pos_idx_end, position, self.np_del_pos, WINDOW_SIZE)
-                window_del_pos = self.np_del_pos[del_pos_idx_start:del_pos_idx_end]
-                pval_del = binom_test(n_del_pos, n=len(window_del_pos), p=proba, alternative='greater')
-                str_pos_idx_start, str_pos_idx_end = self.update_index(str_pos_idx_start, str_pos_idx_end, position, self.np_str_pos, WINDOW_SIZE)
-                window_str_pos = self.np_str_pos[str_pos_idx_start:str_pos_idx_end]
-                pval_str = binom_test(n_str_pos, n=len(window_str_pos), p=proba, alternative='greater')
-                self.res_pos_pos.append(position) ; self.res_del_pos.append(pval_del) ; self.res_str_pos.append(pval_str)
+                n_del_neg = len(self.np_del_neg[del_neg_idx_start_summit:del_neg_idx_end_summit])
+                n_str_neg = len(self.np_str_neg[str_neg_idx_start_summit:str_neg_idx_end_summit])
 
-            if n_del_neg > 1 or n_str_neg > 1:
-            # Here we look at the position w.r.t the negative strand and make statistics if n_event > 1
-                del_neg_idx_start, del_neg_idx_end = self.update_index(del_neg_idx_start, del_neg_idx_end, position, self.np_del_neg, WINDOW_SIZE)        
-                window_del_neg = self.np_del_neg[del_neg_idx_start:del_neg_idx_end]
-                str_neg_idx_start, str_neg_idx_end = self.update_index(str_neg_idx_start, str_neg_idx_end, position, self.np_str_neg, WINDOW_SIZE)        
-                window_str_neg = self.np_str_neg[str_neg_idx_start:str_neg_idx_end]
-                pval_del = binom_test(n_del_neg, n=len(window_del_neg), p=proba, alternative='greater')
-                pval_str = binom_test(n_str_neg, n=len(window_str_neg), p=proba, alternative='greater')
-                self.res_pos_neg.append(position) ; self.res_del_neg.append(pval_del) ; self.res_str_neg.append(pval_str)
-            count_line += 1
-            
+                if n_del_neg > 1 or n_str_neg > 1:
+                # Here we look at the position w.r.t the negative strand and make statistics if n_event > 1
+                    del_neg_idx_start, del_neg_idx_end = self.update_index(del_neg_idx_start, del_neg_idx_end, position, self.np_del_neg, WINDOW_SIZE)        
+                    window_del_neg = self.np_del_neg[del_neg_idx_start:del_neg_idx_end]
+                    str_neg_idx_start, str_neg_idx_end = self.update_index(str_neg_idx_start, str_neg_idx_end, position, self.np_str_neg, WINDOW_SIZE)        
+                    window_str_neg = self.np_str_neg[str_neg_idx_start:str_neg_idx_end]
+                    pval_del = binom_test(n_del_neg, n=len(window_del_neg), p=proba, alternative='greater')
+                    pval_str = binom_test(n_str_neg, n=len(window_str_neg), p=proba, alternative='greater')
+                    self.res_pos_neg.append(position) ; self.res_del_neg.append(pval_del) ; self.res_str_neg.append(pval_str)
+                count_line += 1
+                        
     def part4_assemble_results(self):
     ### PART 4 - Assemble results and keep significant peaks ###
         #print('PART 4 - Assemble results and keep significant peaks')
@@ -230,15 +248,22 @@ class ChromosomeParser(object):
                                             np.array(['-' for x in range(len(self.res_pos_neg))]),
                                             np.array(self.res_del_neg), np.array(self.res_str_neg), np.array(comb_pval_neg)]),
                               index = ['chr', 'start', 'end', 'strand', 'pval_del', 'pval_start', 'pval_combined']).T
+        
+        if self.valid_pos_strand and self.valid_neg_strand:
+            self.pd_res = pd.concat((pd_res_pos, pd_res_neg))
+            self.pd_res.reset_index(inplace=True, drop=True)
+            self.pd_res.sort_values('start', inplace=True)
+            self.pd_res['pval_combined'] = pd.to_numeric(self.pd_res['pval_combined'])
+        elif self.valid_pos_strand and not self.valid_neg_strand:
+            self.pd_res = pd_res_pos
+        elif self.valid_neg_strand and not self.valid_pos_strand:
+            self.pd_res = pd_res_neg
 
-        self.pd_res = pd.concat((pd_res_pos, pd_res_neg))
-
-        if self.pd_res.shape[0] >=2:     
+        if self.valid_pos_strand or self.valid_neg_strand:
             self.pd_res.reset_index(inplace=True, drop=True)
             self.pd_res.sort_values('start', inplace=True)
             self.pd_res['pval_combined'] = pd.to_numeric(self.pd_res['pval_combined'])
 
-            
     def find_1d_deletion_position(self, cigar_string):
     # This function will read the CIGAR string, and 
     # find deletion's position w.r.t start position
@@ -345,17 +370,16 @@ def generate_chromosome_list(bam_file, tmp_chrom_file):
     os.system(cmd_)
     chroms = np.array(pd.read_csv(TMP_CHROM_FILE, header=None)[0])
     chroms = chroms[chroms != '*']
-    chroms = chroms[np.array(['random' not in x and 'chrUn' not in x for x in chroms])]
+    #chroms = chroms[np.array(['random' not in x and 'chrUn' not in x for x in chroms])]
     return(chroms)
 
 def launch_one_chromosome(this_chromosome):
     ChrPrs_object = ChromosomeParser(this_chromosome, BAM_FILE, TMP_FOLDER)
     ChrPrs_object.part1_gen_bam_and_bed()
     ChrPrs_object.part2_read_bed_file_record_info()
-    if ChrPrs_object.valid_chromosome:
-        ChrPrs_object.part3_analysis()
-        ChrPrs_object.part4_assemble_results()
-        return(ChrPrs_object.pd_res)
+    ChrPrs_object.part3_analysis()
+    ChrPrs_object.part4_assemble_results()
+    return(ChrPrs_object.pd_res)
 
 
 ### MAIN ###
@@ -366,7 +390,8 @@ if __name__ == "__main__":
     print('Prepare folders and data')
     create_folder_if_not_exists(TMP_FOLDER)
     chroms = generate_chromosome_list(BAM_FILE, TMP_CHROM_FILE)
-    chrome = np.flip(chroms)
+    chroms = np.flip(chroms)
+    #chroms = chroms[0:10]
 
     # Launch peak calling with multi-processing per chromosome
     print('Launch peak calling with multi-processing per chromosome')
