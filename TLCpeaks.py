@@ -22,6 +22,10 @@ parser.add_argument('-i', '--input_bam', type=str,
                     help='Input BAM file to be used to call peaks. [REQUIRED]')
 parser.add_argument('-o', '--out_file', type=str,
                     help='Output file with results. [REQUIRED]')
+parser.add_argument('-d', '--in_dir', type=str,default=None,
+                    help='Input directory containing multiple BAM files. If provided, --input_bam option is ignored. [OPTIONAL]')
+parser.add_argument('--out_dir', type=str,default=None,
+                    help='Outpud directory if multiple files are provided as input. If provided, --out_file option is ignored. [OPTIONAL]')
 parser.add_argument('-t', '--tmp_folder', type=str, default="tmp_folder",
                     help='temporary folder where intermediate results are writen. Typically, one bam file per chromosome and its respective bed file will be written there. This takes a lot of memory space and needs to be removed afterwards. Default is tmp_folder/ [OPTIONAL]')
 parser.add_argument('-n', '--n_cpu', type=int, default=4,
@@ -55,14 +59,20 @@ DEL_WEIGHT = args.del_weight
 STR_WEIGHT = 1.0 - DEL_WEIGHT
 ADJUST_PVAL = args.adjust_pval
 PVAL_CUTOFF = args.pval_cutoff
-print(ADJUST_PVAL)
+IN_DIR = args.in_dir
+OUT_DIR = args.out_dir
+if IN_DIR is None:
+    SINGLE_FILE = True
+    if BAM_FILE is None or OUT_FILE is None:
+        raise Exception('Both input BAM file and output BED file need to be specified. Exiting.')
+else:
+    SINGLE_FILE = False
+    if OUT_DIR is None:
+        raise Exception('Input folder with multiple BAM provided. An output folder should be provided too. Exiting.')
 
 # Check inputs
 if DEL_WEIGHT < 0.0 or DEL_WEIGHT > 1.0:
     raise Exception('Weight for deletion should be included in [0, 1]. Exiting.')
-if BAM_FILE is None or OUT_FILE is None:
-    raise Exception('Both input BAM file and output BED file need to be specified. Exiting.')
-
 ### Class Definition ###
 
 class ChromosomeParser(object):
@@ -384,15 +394,14 @@ def launch_one_chromosome(this_chromosome):
     ChrPrs_object.part4_assemble_results()
     return(ChrPrs_object.pd_res)
 
-
-### MAIN ###
-if __name__ == "__main__":
     start_all = timeit.default_timer()
 
+def launch_one_bam_file(this_bam, OUT_FILE):
+    start_all = timeit.default_timer()
     # Prepare folders and data
     print('Prepare folders and data')
     create_folder_if_not_exists(TMP_FOLDER)
-    chroms = generate_chromosome_list(BAM_FILE, TMP_CHROM_FILE)
+    chroms = generate_chromosome_list(this_bam, TMP_CHROM_FILE)
     chroms = np.flip(chroms)
     #chroms = chroms[0:10]
 
@@ -420,4 +429,63 @@ if __name__ == "__main__":
     pd_general_results_sub.to_csv(OUT_FILE, sep="\t", index=False, header=False)
     
     stop_all = timeit.default_timer()
-    print('Running time of TLCpeaks for {0} : {1} min'.format(BAM_FILE, str( (stop_all - start_all)/60))) 
+    print('Running time of TLCpeaks for {0} : {1} min'.format(this_bam, str( round( (stop_all - start_all)/60, 3)))) 
+
+
+### MAIN ###
+if __name__ == "__main__":
+    
+    if SINGLE_FILE:
+        start_all = timeit.default_timer()
+        
+        bai_file = in_dir + "/" + BAM_FILE + '.bai'
+        if not os.path.exists(bai_file):
+            raise ValueError('Error: no index file was found for ' + BAM_FILE + ', exiting...')
+
+        # Prepare folders and data
+        print('Prepare folders and data')
+        create_folder_if_not_exists(TMP_FOLDER)
+        chroms = generate_chromosome_list(BAM_FILE, TMP_CHROM_FILE)
+        chroms = np.flip(chroms)
+        #chroms = chroms[0:10]
+
+        # Launch peak calling with multi-processing per chromosome
+        print('Launch peak calling with multi-processing per chromosome')
+        list_results = []
+        with Pool(N_CPU) as p:
+            list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome,
+                                                 chroms),
+                                  total = len(chroms),
+                                  position=0, leave=True))
+
+        # Combine results
+        print('Combine results and adjust p-values for multiple-testing')
+        pd_general_results = pd.concat(list_results)
+        pd_general_results['pval_combined_adj'] = multi.multipletests(pd_general_results['pval_combined'])[1]
+        if ADJUST_PVAL:
+            pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < PVAL_CUTOFF)].copy()
+            pd_general_results_sub.sort_values('pval_combined_adj', inplace=True)
+        else:
+            pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined'] < PVAL_CUTOFF)].copy()
+            pd_general_results_sub.sort_values('pval_combined', inplace=True)
+
+        pd_general_results_sub = pd_general_results_sub[['chr', 'start', 'end', 'pval_del', 'pval_start','strand', 'pval_combined', 'pval_combined_adj']]
+        pd_general_results_sub.to_csv(OUT_FILE, sep="\t", index=False, header=False)
+        
+        stop_all = timeit.default_timer()
+        print('Running time of TLCpeaks for {0} : {1} min'.format(BAM_FILE, str( round( (stop_all - start_all)/60, 3)))) 
+    else:
+        create_folder_if_not_exists(OUT_DIR)
+        list_files = os.listdir(IN_DIR)
+        list_files = [x for x in list_files if '.bam' in x and '.bai' not in x]
+        for this_bam in list_files:
+            bai_file = IN_DIR + "/" + this_bam + '.bai'
+            BAM_FILE = IN_DIR + "/" + this_bam
+            if os.path.exists(bai_file):
+                print('working with ' + this_bam)
+                out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0]
+                launch_one_bam_file(BAM_FILE, out_file)
+            else:
+                print('Skipping ' + BAM_FILE + ', no index .bai found !')
+
+
