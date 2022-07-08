@@ -483,7 +483,7 @@ if __name__ == "__main__":
             bam_path = IN_DIR + "/" + this_bam
             if os.path.exists(bai_file):
                 print('working with ' + this_bam)
-                out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0]
+                out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0] + '.bed'
                 launch_one_bam_file(bam_path, out_file)
             else:
                 print('Skipping ' + bam_path + ', no index .bai found !')
