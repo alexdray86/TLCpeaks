@@ -379,22 +379,22 @@ def create_folder_if_not_exists(folder):
 
 
 def generate_chromosome_list(bam_file, tmp_chrom_file):
-    cmd_ = "samtools idxstats {0} | cut -f 1 > {1}".format(BAM_FILE, TMP_CHROM_FILE)
+    cmd_ = "samtools idxstats {0} | cut -f 1 > {1}".format(bam_file, TMP_CHROM_FILE)
     os.system(cmd_)
     chroms = np.array(pd.read_csv(TMP_CHROM_FILE, header=None)[0])
     chroms = chroms[chroms != '*']
     #chroms = chroms[np.array(['random' not in x and 'chrUn' not in x for x in chroms])]
     return(chroms)
 
-def launch_one_chromosome(this_chromosome):
-    ChrPrs_object = ChromosomeParser(this_chromosome, BAM_FILE, TMP_FOLDER)
+def launch_one_chromosome(input_list):
+    this_chromosome = input_list[0]
+    this_file = input_list[1]
+    ChrPrs_object = ChromosomeParser(this_chromosome, this_file, TMP_FOLDER)
     ChrPrs_object.part1_gen_bam_and_bed()
     ChrPrs_object.part2_read_bed_file_record_info()
     ChrPrs_object.part3_analysis()
     ChrPrs_object.part4_assemble_results()
     return(ChrPrs_object.pd_res)
-
-    start_all = timeit.default_timer()
 
 def launch_one_bam_file(this_bam, OUT_FILE):
     start_all = timeit.default_timer()
@@ -403,15 +403,15 @@ def launch_one_bam_file(this_bam, OUT_FILE):
     create_folder_if_not_exists(TMP_FOLDER)
     chroms = generate_chromosome_list(this_bam, TMP_CHROM_FILE)
     chroms = np.flip(chroms)
-    #chroms = chroms[0:10]
-
+    list_input = [[x, this_bam] for x in chroms]
+    
     # Launch peak calling with multi-processing per chromosome
     print('Launch peak calling with multi-processing per chromosome')
     list_results = []
     with Pool(N_CPU) as p:
         list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome,
-                                             chroms),
-                              total = len(chroms),
+                                             list_input),
+                              total = len(list_input),
                               position=0, leave=True))
 
     # Combine results
@@ -438,7 +438,7 @@ if __name__ == "__main__":
     if SINGLE_FILE:
         start_all = timeit.default_timer()
         
-        bai_file = in_dir + "/" + BAM_FILE + '.bai'
+        bai_file = BAM_FILE + '.bai'
         if not os.path.exists(bai_file):
             raise ValueError('Error: no index file was found for ' + BAM_FILE + ', exiting...')
 
@@ -447,15 +447,15 @@ if __name__ == "__main__":
         create_folder_if_not_exists(TMP_FOLDER)
         chroms = generate_chromosome_list(BAM_FILE, TMP_CHROM_FILE)
         chroms = np.flip(chroms)
-        #chroms = chroms[0:10]
-
+        list_input = [[x, BAM_FILE] for x in chroms]
+        
         # Launch peak calling with multi-processing per chromosome
         print('Launch peak calling with multi-processing per chromosome')
         list_results = []
         with Pool(N_CPU) as p:
             list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome,
-                                                 chroms),
-                                  total = len(chroms),
+                                                 list_input),
+                                  total = len(list_input),
                                   position=0, leave=True))
 
         # Combine results
@@ -480,12 +480,12 @@ if __name__ == "__main__":
         list_files = [x for x in list_files if '.bam' in x and '.bai' not in x]
         for this_bam in list_files:
             bai_file = IN_DIR + "/" + this_bam + '.bai'
-            BAM_FILE = IN_DIR + "/" + this_bam
+            bam_path = IN_DIR + "/" + this_bam
             if os.path.exists(bai_file):
                 print('working with ' + this_bam)
                 out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0]
-                launch_one_bam_file(BAM_FILE, out_file)
+                launch_one_bam_file(bam_path, out_file)
             else:
-                print('Skipping ' + BAM_FILE + ', no index .bai found !')
+                print('Skipping ' + bam_path + ', no index .bai found !')
 
 
