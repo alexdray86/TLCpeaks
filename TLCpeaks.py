@@ -253,13 +253,13 @@ class ChromosomeParser(object):
             comb_pval_neg.append(comb_pval)
 
         pd_res_pos = pd.DataFrame(np.array([np.array([self.chrom for x in range(len(self.res_pos_pos))]), 
-                                            np.array(self.res_pos_pos)-(WIDTH_PEAK/2), np.array(self.res_pos_pos)+(WIDTH_PEAK/2), 
+                                            np.array(self.res_pos_pos)-int(WIDTH_PEAK/2), np.array(self.res_pos_pos)+int(WIDTH_PEAK/2)+1, 
                                             np.array(['+' for x in range(len(self.res_pos_pos))]),
                                             np.array(self.res_del_pos), np.array(self.res_str_pos), np.array(comb_pval_pos)]),
                               index = ['chr', 'start', 'end', 'strand','pval_del', 'pval_start', 'pval_combined']).T
 
         pd_res_neg = pd.DataFrame(np.array([np.array([self.chrom for x in range(len(self.res_pos_neg))]), 
-                                            np.array(self.res_pos_neg)-(WIDTH_PEAK/2), np.array(self.res_pos_neg)+(WIDTH_PEAK/2), 
+                                            np.array(self.res_pos_neg)-int(WIDTH_PEAK/2), np.array(self.res_pos_neg)+int(WIDTH_PEAK/2)+1, 
                                             np.array(['-' for x in range(len(self.res_pos_neg))]),
                                             np.array(self.res_del_neg), np.array(self.res_str_neg), np.array(comb_pval_neg)]),
                               index = ['chr', 'start', 'end', 'strand', 'pval_del', 'pval_start', 'pval_combined']).T
