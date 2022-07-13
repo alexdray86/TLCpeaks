@@ -152,9 +152,9 @@ class ChromosomeParser(object):
                     # First filter on read length : 
                     if read_length > 18 and read_length <= 68:
                         if strand == '+':
-                            list_start_pos.append(int(pos))
+                            list_start_pos.append(int(pos)-1)
                         elif strand == '-':
-                            list_start_neg.append(int(end))
+                            list_start_neg.append(int(end)+1)
         # Generate unique positions 
         self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_start_pos))), 
                                                              return_counts=True)
