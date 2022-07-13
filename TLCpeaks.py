@@ -42,7 +42,8 @@ parser.add_argument('--adjust_pval', type=boolean_string, default=True,
         help='Whether adjusted p-value should be used to filter the results. If False, the non-adjusted p-value is used to filter significant peaks. In any cases, the asjtment is done and printed in the output. [OPTIONAL]')
 parser.add_argument('-p', '--pval_cutoff', type=float, default=0.05,
                     help='Cut-off on the p-values used to call a peak significant. By default, it will be set at 0.05. If option --adjust_pval is False, then this cutoff will be used on the non-adjusted p-value.')
-
+parser.add_argument('--width_peaks', type=int, default=20,
+        help='Once the cross-linking site has been found, this will determine how much we enlarge it to make a peak around it. Default is 20bp peaks. [OPTIONAL]')
 
 args = parser.parse_args()
 
@@ -52,6 +53,7 @@ OUT_FILE = args.out_file
 MIN_READ_LENGTH = args.min_read_length
 MAX_READ_LENGTH = args.max_read_length
 WINDOW_SIZE = args.window_size
+WIDTH_PEAK = args.width_peaks
 TMP_FOLDER = args.tmp_folder
 TMP_CHROM_FILE = TMP_FOLDER + "/list_chromosomes.txt"
 N_CPU = args.n_cpu
@@ -251,13 +253,13 @@ class ChromosomeParser(object):
             comb_pval_neg.append(comb_pval)
 
         pd_res_pos = pd.DataFrame(np.array([np.array([self.chrom for x in range(len(self.res_pos_pos))]), 
-                                            np.array(self.res_pos_pos)-10, np.array(self.res_pos_pos)+10, 
+                                            np.array(self.res_pos_pos)-(WIDTH_PEAK/2), np.array(self.res_pos_pos)+(WIDTH_PEAK/2), 
                                             np.array(['+' for x in range(len(self.res_pos_pos))]),
                                             np.array(self.res_del_pos), np.array(self.res_str_pos), np.array(comb_pval_pos)]),
                               index = ['chr', 'start', 'end', 'strand','pval_del', 'pval_start', 'pval_combined']).T
 
         pd_res_neg = pd.DataFrame(np.array([np.array([self.chrom for x in range(len(self.res_pos_neg))]), 
-                                            np.array(self.res_pos_neg)-10, np.array(self.res_pos_neg)+10, 
+                                            np.array(self.res_pos_neg)-(WIDTH_PEAK/2), np.array(self.res_pos_neg)+(WIDTH_PEAK/2), 
                                             np.array(['-' for x in range(len(self.res_pos_neg))]),
                                             np.array(self.res_del_neg), np.array(self.res_str_neg), np.array(comb_pval_neg)]),
                               index = ['chr', 'start', 'end', 'strand', 'pval_del', 'pval_start', 'pval_combined']).T
