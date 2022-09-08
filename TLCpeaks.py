@@ -44,6 +44,8 @@ parser.add_argument('-p', '--pval_cutoff', type=float, default=0.05,
                     help='Cut-off on the p-values used to call a peak significant. By default, it will be set at 0.05. If option --adjust_pval is False, then this cutoff will be used on the non-adjusted p-value.')
 parser.add_argument('--width_peaks', type=int, default=20,
         help='Once the cross-linking site has been found, this will determine how much we enlarge it to make a peak around it. Default is 20bp peaks. [OPTIONAL]')
+parser.add_argument('--suffix', type=str, default="_tlcpeaks",
+                    help='suffix to add at the end of bed file names created by TLCpeaks. Default is _tlcpeaks [OPTIONAL]')
 
 args = parser.parse_args()
 
@@ -63,6 +65,7 @@ ADJUST_PVAL = args.adjust_pval
 PVAL_CUTOFF = args.pval_cutoff
 IN_DIR = args.in_dir
 OUT_DIR = args.out_dir
+SUFFIX = args.suffix
 if IN_DIR is None:
     SINGLE_FILE = True
     if BAM_FILE is None or OUT_FILE is None:
@@ -485,7 +488,7 @@ if __name__ == "__main__":
             bam_path = IN_DIR + "/" + this_bam
             if os.path.exists(bai_file):
                 print('working with ' + this_bam)
-                out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0] + '.bed'
+                out_file = OUT_DIR + "/" + this_bam.rsplit('.', 1)[0] + SUFFIX + '.bed'
                 launch_one_bam_file(bam_path, out_file)
             else:
                 print('Skipping ' + bam_path + ', no index .bai found !')
