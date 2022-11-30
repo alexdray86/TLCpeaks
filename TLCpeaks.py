@@ -489,17 +489,43 @@ def launch_one_chromosome(input_list):
     ChrPrs_object.part4_assemble_results()
     return(ChrPrs_object.pd_res)
 
-def launch_one_bam_file(this_bam, OUT_FILE):
+def launch_one_bam_file(this_bam, out_file):
     start_all = timeit.default_timer()
+        
+    bai_file = this_bam + '.bai'
+    if not os.path.exists(bai_file):
+        raise ValueError('Error: no index file was found for ' + this_bam + ', exiting...')
+
     # Prepare folders and data
     print('Prepare folders and data')
     create_folder_if_not_exists(TMP_FOLDER)
     chroms = generate_chromosome_list(this_bam, TMP_CHROM_FILE)
     chroms = np.flip(chroms)
     list_input = [[x, this_bam] for x in chroms]
-    
+   
+    # Launch peak calling with multi-processing per chromosome
+    print('Launch Deletion/Starting Site event counting with multi-processing per chromosome')
+    list_results = []
+    with Pool(N_CPU) as p:
+        list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome_counts,
+                                             list_input),
+                              total = len(list_input),
+                              position=0, leave=True))
+    print(pd.concat(list_results))
+    pd_Ns = pd.concat(list_results)
+    N_d = np.sum(pd_Ns['N_d'])
+    N_s = np.sum(pd_Ns['N_s'])
+    P_D = N_d / (N_d + N_s)
+    P_S = N_s / (N_d + N_s)
+    print("total number of Deletion to consider : {}".format(N_d))
+    print("Probability of having a Deletion among all events considered : {}".format(P_D))
+    print("total number of starting sites to consider : {}".format(N_s))
+    print("Probability of having a Staring site among all events considered : {}".format(P_S))
+
     # Launch peak calling with multi-processing per chromosome
     print('Launch peak calling with multi-processing per chromosome')
+    list_input = [[x, this_bam, P_D, P_S] for x in chroms]
+
     list_results = []
     with Pool(N_CPU) as p:
         list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome,
@@ -510,19 +536,21 @@ def launch_one_bam_file(this_bam, OUT_FILE):
     # Combine results
     print('Combine results and adjust p-values for multiple-testing')
     pd_general_results = pd.concat(list_results)
-    pd_general_results['pval_combined_adj'] = multi.multipletests(pd_general_results['pval_combined'])[1]
+    pd_general_results[METHOD] = pd_general_results[METHOD].astype(float)
+    pd_general_results['pval_combined_adj'] = multi.multipletests(pd_general_results[METHOD])[1]
     if ADJUST_PVAL:
         pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined_adj'] < PVAL_CUTOFF)].copy()
         pd_general_results_sub.sort_values('pval_combined_adj', inplace=True)
     else:
-        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results['pval_combined'] < PVAL_CUTOFF)].copy()
-        pd_general_results_sub.sort_values('pval_combined', inplace=True)
+        pd_general_results_sub = pd_general_results.iloc[np.array(pd_general_results[METHOD] < PVAL_CUTOFF)].copy()
+        pd_general_results_sub.sort_values(METHOD, inplace=True)
 
-    pd_general_results_sub = pd_general_results_sub[['chr', 'start', 'end', 'pval_del', 'pval_start','strand', 'pval_combined', 'pval_combined_adj']]
-    pd_general_results_sub.to_csv(OUT_FILE, sep="\t", index=False, header=False)
+    pd_general_results_sub = pd_general_results_sub[['chr', 'start', 'end', 'pval_del', 'pval_start','strand', METHOD, 'pval_combined_adj']]
+    pd_general_results_sub.to_csv(out_file, sep="\t", index=False, header=False)
     
     stop_all = timeit.default_timer()
     print('Running time of TLCpeaks for {0} : {1} min'.format(this_bam, str( round( (stop_all - start_all)/60, 3)))) 
+
 
 def launch_one_chromosome_counts(input_list):
     this_chromosome = input_list[0]
@@ -550,7 +578,7 @@ if __name__ == "__main__":
         list_input = [[x, BAM_FILE] for x in chroms]
        
         # Launch peak calling with multi-processing per chromosome
-        print('Launch peak calling with multi-processing per chromosome')
+        print('Launch Deletion/Starting Site event counting with multi-processing per chromosome')
         list_results = []
         with Pool(N_CPU) as p:
             list_results = list(tqdm.tqdm(p.imap(launch_one_chromosome_counts,
