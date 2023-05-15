@@ -46,6 +46,8 @@ parser.add_argument('--width_peaks', type=int, default=20,
         help='Once the cross-linking site has been found, this will determine how much we enlarge it to make a peak around it. Default is 20bp peaks. [OPTIONAL]')
 parser.add_argument('--method', type=str, default='P_d_and_s',
                     help='Method to compute P-value - define which p-value will be adjusted and used to filter peaks and rank them. *pval_combined* is the old method, all the other ones are the new ones. Options are: pval_combined, P_d_cond_s, P_d_or_s, and P_d_and_s (I will explain next week exactly what they are) Enjoy! Default: P_d_and_s [OPTIONAL]')
+parser.add_argument('--mode', type=str, default='ss_and_del',
+                   help="['ss_only', 'ss_and_del', 'del_only'] Mode to compute statistical test. 'ss_only' mode uses only starting site to compute the statistics. 'ss_and_del' mode uses both starting site and deletion to compute statistics. 'del_only' mode uses only deletions to compute statistics.")
 
 #'pval_combined','P_d', 'P_s', 'P_d_cond_s', 'P_s_cond_d', 'P_d_or_s', 'P_d_and_s'
 args = parser.parse_args()
@@ -68,6 +70,7 @@ PVAL_CUTOFF = args.pval_cutoff
 IN_DIR = args.in_dir
 OUT_DIR = args.out_dir
 METHOD = args.method
+MODE = args.mode
 if IN_DIR is None:
     SINGLE_FILE = True
     if BAM_FILE is None or OUT_FILE is None:
@@ -80,8 +83,10 @@ else:
 # Check inputs
 if DEL_WEIGHT < 0.0 or DEL_WEIGHT > 1.0:
     raise Exception('Weight for deletion should be included in [0, 1]. Exiting.')
-### Class Definition ###
+if (MODE != 'ss_only') and (MODE != 'ss_and_del') and (MODE != 'del_only'):
+    raise Exception('Wrong mode provided. Exiting.')
 
+### Class Definition ###
 class TLCpeaks(object):
     def __init__(self, chrom, bam_file, tmp_folder, P_D, P_S):
         """Launch peak calling analysis on one chromosome. Outputs a pandas dataframe with all significant peaks
@@ -197,41 +202,67 @@ class TLCpeaks(object):
                 strand = fields[5]
                 cigar = fields[6]
                 read_length = int(end) - int(pos)
-                if '1D' in cigar : # or '1I' in cigar
-                # option 1 : there is a 1bp deletion event 
-                    pos_del = self.find_1d_deletion_position(cigar)
-                    N_d+=1
-                    if strand == '+':
-                        list_delet_pos.append(int(pos) + int(pos_del))
-                    else:
-                        list_delet_neg.append(int(pos) + int(pos_del))
-                elif '2D' in cigar or '3D' in cigar: # or '3D' in cigar
-                # option 2 : there is a 2bp/3bp deletion event 
-                    pos_del = self.find_2d3d_deletion_position(cigar)
-                    N_d+=1
-                    for pos_d in pos_del:
+                if MODE == 'ss_and_del':
+                    if '1D' in cigar : # or '1I' in cigar
+                    # option 1 : there is a 1bp deletion event 
+                        pos_del = self.find_1d_deletion_position(cigar)
+                        N_d+=1
                         if strand == '+':
-                            list_delet_pos.append(int(pos) + int(pos_d))
+                            list_delet_pos.append(int(pos) + int(pos_del))
                         else:
-                            list_delet_neg.append(int(pos) + int(pos_d))
-                else:
-                    # First filter on read length : 
+                            list_delet_neg.append(int(pos) + int(pos_del))
+                    elif '2D' in cigar or '3D' in cigar: # or '3D' in cigar
+                    # option 2 : there is a 2bp/3bp deletion event 
+                        pos_del = self.find_2d3d_deletion_position(cigar)
+                        N_d+=1
+                        for pos_d in pos_del:
+                            if strand == '+':
+                                list_delet_pos.append(int(pos) + int(pos_d))
+                            else:
+                                list_delet_neg.append(int(pos) + int(pos_d))
+                    else:
+                        # First filter on read length : 
+                        if read_length > 18 and read_length <= 68:
+                            N_s+=1
+                            if strand == '+':
+                                list_start_pos.append(int(pos)-1)
+                            elif strand == '-':
+                                list_start_neg.append(int(end)+1)
+                elif MODE == 'del_only':
+                    if '1D' in cigar : # or '1I' in cigar
+                    # option 1 : there is a 1bp deletion event 
+                        pos_del = self.find_1d_deletion_position(cigar)
+                        N_d+=1
+                        if strand == '+':
+                            list_delet_pos.append(int(pos) + int(pos_del))
+                        else:
+                            list_delet_neg.append(int(pos) + int(pos_del))
+                    elif '2D' in cigar or '3D' in cigar: # or '3D' in cigar
+                    # option 2 : there is a 2bp/3bp deletion event 
+                        pos_del = self.find_2d3d_deletion_position(cigar)
+                        N_d+=1
+                        for pos_d in pos_del:
+                            if strand == '+':
+                                list_delet_pos.append(int(pos) + int(pos_d))
+                            else:
+                                list_delet_neg.append(int(pos) + int(pos_d))
+                elif MODE == 'ss_only':
                     if read_length > 18 and read_length <= 68:
                         N_s+=1
                         if strand == '+':
                             list_start_pos.append(int(pos)-1)
                         elif strand == '-':
                             list_start_neg.append(int(end)+1)
+
         # Generate unique positions 
-        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_pos), np.unique(list_start_pos))), 
+        self.unique_positions, c = np.unique(np.concatenate((np.array(list_delet_pos), np.array(list_start_pos))), 
                                                              return_counts=True)
         self.unique_positions_pos = self.unique_positions[c > 1].copy()
 
-        self.unique_positions, c = np.unique(np.concatenate((np.unique(list_delet_neg), np.unique(list_start_neg))),
+        self.unique_positions, c = np.unique(np.concatenate((np.array(list_delet_neg), np.array(list_start_neg))),
                                                              return_counts=True)
         self.unique_positions_neg = self.unique_positions[c > 1].copy()
-
-
+        
         # Store numpy arrays for delete / start positions 
         # Generating numpy array from lists for better performance 
         self.np_del_pos = np.sort(np.array(list_delet_pos)) ; self.np_del_neg = np.sort(np.array(list_delet_neg))
@@ -426,36 +457,42 @@ class TLCpeaks(object):
         return(multi_del)
 
     def find_position(self, idx_start, idx_end, position, vect):
-        new_idx_start, new_idx_end = max(min(idx_start, len(vect)-1),0), max(min(idx_end, len(vect)-1),0)
-        while(vect[new_idx_start] != position and vect[new_idx_start] < position) and new_idx_start < len(vect)-1:
-            new_idx_start += 1
-        while(vect[new_idx_end] != position and vect[new_idx_end] < position) and new_idx_end < len(vect)-1:
-            new_idx_end += 1
-        if vect[new_idx_end] == position and new_idx_end < len(vect)-1:
-            while(vect[new_idx_end] == position and new_idx_end < len(vect)-1):
+        if len(vect) == 0:
+            return idx_start,idx_end
+        else:
+            new_idx_start, new_idx_end = max(min(idx_start, len(vect)-1),0), max(min(idx_end, len(vect)-1),0)
+            while(vect[new_idx_start] != position and vect[new_idx_start] < position) and new_idx_start < len(vect)-1:
+                new_idx_start += 1
+            while(vect[new_idx_end] != position and vect[new_idx_end] < position) and new_idx_end < len(vect)-1:
                 new_idx_end += 1
-        if new_idx_start == new_idx_end and new_idx_end < len(vect)-1:
-            new_idx_end += 1
-        if new_idx_end >= len(vect)-1:
-            new_idx_end = len(vect) - 1
-        if vect[new_idx_start] != position:
-            new_idx_start = idx_start
-            new_idx_end = idx_start
-        return new_idx_start, new_idx_end
+            if vect[new_idx_end] == position and new_idx_end < len(vect)-1:
+                while(vect[new_idx_end] == position and new_idx_end < len(vect)-1):
+                    new_idx_end += 1
+            if new_idx_start == new_idx_end and new_idx_end < len(vect)-1:
+                new_idx_end += 1
+            if new_idx_end >= len(vect)-1:
+                new_idx_end = len(vect) - 1
+            if vect[new_idx_start] != position:
+                new_idx_start = idx_start
+                new_idx_end = idx_start
+            return new_idx_start, new_idx_end
 
     def update_index(self, idx_start, idx_end, position, vect, WINDOW_SIZE):
-        low_bound = position - int(WINDOW_SIZE/2)
-        up_bound  = position + int(WINDOW_SIZE/2)
-        new_idx_start, new_idx_end = max(min(idx_start, len(vect)-1),0), max(min(idx_end, len(vect)-1),0)
-        while(vect[new_idx_start] < low_bound and new_idx_start < len(vect)-1):
-            new_idx_start += 1
-        while(vect[new_idx_end] < up_bound and new_idx_end < len(vect)-1):
-            new_idx_end += 1
-        if new_idx_start == new_idx_end and new_idx_end < len(vect)-1:
-            new_idx_end += 1
-        if new_idx_end >= len(vect)-1:
-            new_idx_end = len(vect) - 1
-        return new_idx_start, new_idx_end
+        if len(vect) == 0:
+            return idx_start,idx_end
+        else:
+            low_bound = position - int(WINDOW_SIZE/2)
+            up_bound  = position + int(WINDOW_SIZE/2)
+            new_idx_start, new_idx_end = max(min(idx_start, len(vect)-1),0), max(min(idx_end, len(vect)-1),0)
+            while(vect[new_idx_start] < low_bound and new_idx_start < len(vect)-1):
+                new_idx_start += 1
+            while(vect[new_idx_end] < up_bound and new_idx_end < len(vect)-1):
+                new_idx_end += 1
+            if new_idx_start == new_idx_end and new_idx_end < len(vect)-1:
+                new_idx_end += 1
+            if new_idx_end >= len(vect)-1:
+                new_idx_end = len(vect) - 1
+            return new_idx_start, new_idx_end
 
 def remove_folder_and_content(folder):
     for file_name in os.listdir(folder):
